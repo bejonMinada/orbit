@@ -201,6 +201,7 @@ class OrbitStore:
                     tx_type TEXT NOT NULL,
                     amount REAL NOT NULL,
                     category TEXT NOT NULL DEFAULT 'General',
+                    month_key TEXT NOT NULL DEFAULT '',
                     note TEXT,
                     created_at TEXT NOT NULL
                 )
@@ -222,12 +223,24 @@ class OrbitStore:
                 conn.execute(
                     "ALTER TABLE transactions ADD COLUMN category TEXT NOT NULL DEFAULT 'General'"
                 )
+            if "month_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE transactions ADD COLUMN month_key TEXT NOT NULL DEFAULT ''"
+                )
+            conn.execute("UPDATE transactions SET month_key = substr(created_at, 1, 7) WHERE month_key = ''")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_transactions_month_key_type_category ON transactions(month_key, tx_type, category)"
+            )
+
+    def _get_current_timestamp(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     def add_transaction(self, tx_type: str, amount: float, category: str, note: str):
         with self._connect() as conn:
+            current_ts = self._get_current_timestamp()
             conn.execute(
-                "INSERT INTO transactions (tx_type, amount, category, note, created_at) VALUES (?, ?, ?, ?, ?)",
-                (tx_type, amount, category, note, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO transactions (tx_type, amount, category, month_key, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (tx_type, amount, category, current_ts[:7], note, current_ts),
             )
 
     def fetch_transactions(self, limit: int = 20):
@@ -251,18 +264,18 @@ class OrbitStore:
     def get_monthly_analytics(self, month_key: str):
         with self._connect() as conn:
             income = conn.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Income' AND substr(created_at, 1, 7) = ?",
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Income' AND month_key = ?",
                 (month_key,),
             ).fetchone()[0]
             expense = conn.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Expense' AND substr(created_at, 1, 7) = ?",
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Expense' AND month_key = ?",
                 (month_key,),
             ).fetchone()[0]
             rows = conn.execute(
                 """
                 SELECT tx_type, category, COALESCE(SUM(amount), 0) AS total
                 FROM transactions
-                WHERE substr(created_at, 1, 7) = ?
+                WHERE month_key = ?
                 GROUP BY tx_type, category
                 ORDER BY tx_type, total DESC
                 """,
@@ -275,7 +288,7 @@ class OrbitStore:
             try:
                 conn.execute(
                     "INSERT INTO barcodes (code, product_name, created_at) VALUES (?, ?, ?)",
-                    (code, product_name, datetime.now(timezone.utc).isoformat()),
+                    (code, product_name, self._get_current_timestamp()),
                 )
                 return True
             except sqlite3.IntegrityError:
@@ -360,8 +373,16 @@ class OrbitRoot(BoxLayout):
                     self._apply_scan_result(result.strip(), "Scanned barcode captured.")
                 else:
                     self.barcode_status = "No barcode detected."
+            except PermissionError:
+                self.barcode_status = "Camera permission denied. Enable camera permission and retry."
+            except NotImplementedError:
+                self.barcode_status = "Barcode scanner is not supported on this device. Use manual barcode input."
             except Exception:
                 self.barcode_status = "Scanner failed. Use manual barcode input."
+        except PermissionError:
+            self.barcode_status = "Camera permission denied. Enable camera permission and retry."
+        except NotImplementedError:
+            self.barcode_status = "Barcode scanner is not supported on this device. Use manual barcode input."
         except Exception:
             self.barcode_status = "Scanner failed. Use manual barcode input."
 
