@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from kivy.app import App
@@ -179,7 +179,7 @@ class OrbitStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO transactions (tx_type, amount, note, created_at) VALUES (?, ?, ?, ?)",
-                (tx_type, amount, note.strip(), datetime.utcnow().isoformat()),
+                (tx_type, amount, note.strip(), datetime.now(timezone.utc).isoformat()),
             )
 
     def fetch_transactions(self, limit: int = 20):
@@ -205,7 +205,7 @@ class OrbitStore:
             try:
                 conn.execute(
                     "INSERT INTO barcodes (code, product_name, created_at) VALUES (?, ?, ?)",
-                    (code.strip(), product_name.strip(), datetime.utcnow().isoformat()),
+                    (code.strip(), product_name.strip(), datetime.now(timezone.utc).isoformat()),
                 )
                 return True
             except sqlite3.IntegrityError:
