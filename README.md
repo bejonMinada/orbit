@@ -31,5 +31,11 @@ Use Buildozer on Linux:
    ```
 3. The generated `.apk` is created in the `bin/` directory.
 
+## Build APK in GitHub Actions
+1. Go to the **Actions** tab.
+2. Run the **Build Android APK** workflow (or push to the branch).
+3. After it finishes, download the `orbit-apk` artifact.
+4. The artifact contains the generated `.apk` from `bin/`.
+
 ## Notes
 - Marketplace price comparison (Shopee/Lazada/etc.) is not included yet because a reliable forever-free integration cannot be guaranteed for production usage.
