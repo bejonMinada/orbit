@@ -178,7 +178,7 @@ class OrbitStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO transactions (tx_type, amount, note, created_at) VALUES (?, ?, ?, ?)",
-                (tx_type, amount, note.strip(), datetime.now(timezone.utc).isoformat()),
+                (tx_type, amount, note, datetime.now(timezone.utc).isoformat()),
             )
 
     def fetch_transactions(self, limit: int = 20):
@@ -204,7 +204,7 @@ class OrbitStore:
             try:
                 conn.execute(
                     "INSERT INTO barcodes (code, product_name, created_at) VALUES (?, ?, ?)",
-                    (code.strip(), product_name.strip(), datetime.now(timezone.utc).isoformat()),
+                    (code, product_name, datetime.now(timezone.utc).isoformat()),
                 )
                 return True
             except sqlite3.IntegrityError:
@@ -314,7 +314,7 @@ class OrbitApp(App):
 
     def build(self):
         Builder.load_string(KV)
-        db_path = Path(App.get_running_app().user_data_dir) / "orbit.db"
+        db_path = Path(self.user_data_dir) / "orbit.db"
         store = OrbitStore(db_path=db_path)
         return OrbitRoot(store=store)
 
