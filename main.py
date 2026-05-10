@@ -220,17 +220,42 @@ class OrbitStore:
 
             columns = [row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()]
             if "category" not in columns:
-                conn.execute(
-                    "ALTER TABLE transactions ADD COLUMN category TEXT NOT NULL DEFAULT 'General'"
+                self._ensure_column(
+                    conn, "category", "ALTER TABLE transactions ADD COLUMN category TEXT NOT NULL DEFAULT 'General'"
                 )
             if "month_key" not in columns:
-                conn.execute(
-                    "ALTER TABLE transactions ADD COLUMN month_key TEXT NOT NULL DEFAULT ''"
+                self._ensure_column(
+                    conn, "month_key", "ALTER TABLE transactions ADD COLUMN month_key TEXT NOT NULL DEFAULT ''"
                 )
-            conn.execute("UPDATE transactions SET month_key = substr(created_at, 1, 7) WHERE month_key = ''")
+
+            rows = conn.execute(
+                "SELECT id, created_at FROM transactions WHERE month_key = ''"
+            ).fetchall()
+            for row_id, created_at in rows:
+                conn.execute(
+                    "UPDATE transactions SET month_key = ? WHERE id = ?",
+                    (self._derive_month_key(created_at), row_id),
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_transactions_month_key_type_category ON transactions(month_key, tx_type, category)"
             )
+
+    def _ensure_column(self, conn: sqlite3.Connection, column_name: str, alter_sql: str):
+        try:
+            conn.execute(alter_sql)
+        except sqlite3.OperationalError:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()]
+            if column_name not in columns:
+                raise
+
+    def _derive_month_key(self, timestamp: str) -> str:
+        try:
+            return datetime.fromisoformat(timestamp).strftime("%Y-%m")
+        except (TypeError, ValueError):
+            ts = str(timestamp or "")
+            if len(ts) >= 7 and ts[4] == "-":
+                return ts[:7]
+            return datetime.now(timezone.utc).strftime("%Y-%m")
 
     def _get_current_timestamp(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -363,22 +388,18 @@ class OrbitRoot(BoxLayout):
 
         self.barcode_status = "Opening camera scanner..."
         try:
-            result = plyer_barcode.scan(self._on_barcode_scanned)
-            if isinstance(result, str) and result.strip():
-                self._apply_scan_result(result.strip(), "Scanned barcode captured.")
-        except TypeError:
             try:
+                result = plyer_barcode.scan(self._on_barcode_scanned)
+                if isinstance(result, str) and result.strip():
+                    self._apply_scan_result(result.strip(), "Scanned barcode captured.")
+            except TypeError:
                 result = plyer_barcode.scan()
                 if isinstance(result, str) and result.strip():
                     self._apply_scan_result(result.strip(), "Scanned barcode captured.")
                 else:
                     self.barcode_status = "No barcode detected."
-            except PermissionError:
-                self.barcode_status = "Camera permission denied. Enable camera permission and retry."
-            except NotImplementedError:
-                self.barcode_status = "Barcode scanner is not supported on this device. Use manual barcode input."
-            except Exception:
-                self.barcode_status = "Scanner failed. Use manual barcode input."
+        except TypeError:
+            self.barcode_status = "Scanner interface mismatch. Use manual barcode input."
         except PermissionError:
             self.barcode_status = "Camera permission denied. Enable camera permission and retry."
         except NotImplementedError:
