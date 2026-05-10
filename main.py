@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -249,11 +250,12 @@ class OrbitStore:
                 raise
 
     def _derive_month_key(self, timestamp: str) -> str:
+        """Best-effort month extraction expecting ISO-8601 (`YYYY-MM-...`) timestamps."""
         try:
             return datetime.fromisoformat(timestamp).strftime("%Y-%m")
         except (TypeError, ValueError):
             ts = str(timestamp or "")
-            if len(ts) >= 7 and ts[4] == "-":
+            if re.match(r"^\\d{4}-\\d{2}", ts):
                 return ts[:7]
             return datetime.now(timezone.utc).strftime("%Y-%m")
 
@@ -388,18 +390,17 @@ class OrbitRoot(BoxLayout):
 
         self.barcode_status = "Opening camera scanner..."
         try:
+            used_callback = True
             try:
                 result = plyer_barcode.scan(self._on_barcode_scanned)
-                if isinstance(result, str) and result.strip():
-                    self._apply_scan_result(result.strip(), "Scanned barcode captured.")
             except TypeError:
+                used_callback = False
                 result = plyer_barcode.scan()
-                if isinstance(result, str) and result.strip():
-                    self._apply_scan_result(result.strip(), "Scanned barcode captured.")
-                else:
-                    self.barcode_status = "No barcode detected."
-        except TypeError:
-            self.barcode_status = "Scanner interface mismatch. Use manual barcode input."
+
+            if not used_callback and not self._apply_scan_result_from_object(result):
+                self.barcode_status = "No barcode detected."
+            elif used_callback and isinstance(result, str) and result.strip():
+                self._apply_scan_result(result.strip(), "Scanned barcode captured.")
         except PermissionError:
             self.barcode_status = "Camera permission denied. Enable camera permission and retry."
         except NotImplementedError:
@@ -408,20 +409,32 @@ class OrbitRoot(BoxLayout):
             self.barcode_status = "Scanner failed. Use manual barcode input."
 
     def _on_barcode_scanned(self, scanned_data):
-        code = ""
-        if isinstance(scanned_data, str):
-            code = scanned_data.strip()
-        elif isinstance(scanned_data, dict):
-            code = str(scanned_data.get("data") or scanned_data.get("text") or "").strip()
-        elif isinstance(scanned_data, (list, tuple)) and scanned_data:
-            code = str(scanned_data[0]).strip()
-        elif scanned_data:
-            code = str(scanned_data).strip()
-
+        code = self._extract_scanned_code(scanned_data)
         if code:
             Clock.schedule_once(lambda _dt: self._apply_scan_result(code, "Scanned barcode captured."))
         else:
             Clock.schedule_once(lambda _dt: self._apply_scan_result("", "No barcode detected."))
+
+    def _extract_scanned_code(self, scanned_data) -> str:
+        if isinstance(scanned_data, str):
+            return scanned_data.strip()
+        if isinstance(scanned_data, dict):
+            for key in ("data", "text"):
+                if key in scanned_data and scanned_data[key] is not None:
+                    return str(scanned_data[key]).strip()
+            return ""
+        if isinstance(scanned_data, (list, tuple)) and scanned_data:
+            return str(scanned_data[0]).strip()
+        if scanned_data is None:
+            return ""
+        return str(scanned_data).strip()
+
+    def _apply_scan_result_from_object(self, scanned_data) -> bool:
+        code = self._extract_scanned_code(scanned_data)
+        if not code:
+            return False
+        self._apply_scan_result(code, "Scanned barcode captured.")
+        return True
 
     def _apply_scan_result(self, code: str, message: str):
         if code:
