@@ -61,6 +61,12 @@ KV = """
             on_release: root.add_transaction()
 
         Label:
+            text: root.transaction_status
+            size_hint_y: None
+            height: dp(24)
+            color: 0.8, 0.2, 0.2, 1
+
+        Label:
             text: root.budget_summary
             halign: "left"
             valign: "middle"
@@ -224,6 +230,8 @@ class OrbitRoot(BoxLayout):
     transactions_text = StringProperty("No transactions yet.")
     barcodes_text = StringProperty("No barcodes yet.")
     barcode_status = StringProperty("")
+    transaction_status = StringProperty("")
+    CURRENCY = "₱"
 
     def __init__(self, store: OrbitStore, **kwargs):
         super().__init__(**kwargs)
@@ -247,19 +255,23 @@ class OrbitRoot(BoxLayout):
         tx_type = self.ids.tx_type_spinner.text
 
         if not amount_text:
+            self.transaction_status = "Please enter an amount."
             return
 
         try:
             amount = float(amount_text)
         except ValueError:
+            self.transaction_status = "Amount must be a number."
             return
 
         if amount <= 0:
+            self.transaction_status = "Amount must be greater than 0."
             return
 
         self.store.add_transaction(tx_type=tx_type, amount=amount, note=note)
         self.ids.amount_input.text = ""
         self.ids.note_input.text = ""
+        self.transaction_status = "Transaction saved."
         self.refresh_budget()
 
     def register_barcode(self):
@@ -282,7 +294,7 @@ class OrbitRoot(BoxLayout):
     def refresh_budget(self):
         income, expense, balance = self.store.get_totals()
         self.budget_summary = (
-            f"Income: ₱{income:,.2f} | Expense: ₱{expense:,.2f} | Balance: ₱{balance:,.2f}"
+            f"Income: {self.CURRENCY}{income:,.2f} | Expense: {self.CURRENCY}{expense:,.2f} | Balance: {self.CURRENCY}{balance:,.2f}"
         )
 
         transactions = self.store.fetch_transactions(limit=20)
@@ -297,7 +309,7 @@ class OrbitRoot(BoxLayout):
             except ValueError:
                 ts = created_at
             note_part = f" - {note}" if note else ""
-            lines.append(f"[{ts}] {tx_type}: ₱{amount:,.2f}{note_part}")
+            lines.append(f"[{ts}] {tx_type}: {self.CURRENCY}{amount:,.2f}{note_part}")
         self.transactions_text = "\n".join(lines)
 
     def refresh_barcodes(self):
