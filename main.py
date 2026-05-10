@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+import inspect
 import re
 
 from kivy.app import App
@@ -255,7 +256,7 @@ class OrbitStore:
             return datetime.fromisoformat(timestamp).strftime("%Y-%m")
         except (TypeError, ValueError):
             ts = str(timestamp or "")
-            if re.match(r"^\\d{4}-\\d{2}", ts):
+            if re.match(r"^\d{4}-\d{2}", ts):
                 return ts[:7]
             return datetime.now(timezone.utc).strftime("%Y-%m")
 
@@ -390,17 +391,24 @@ class OrbitRoot(BoxLayout):
 
         self.barcode_status = "Opening camera scanner..."
         try:
-            used_callback = True
+            scan_fn = plyer_barcode.scan
+            supports_callback = False
             try:
-                result = plyer_barcode.scan(self._on_barcode_scanned)
-            except TypeError:
-                used_callback = False
-                result = plyer_barcode.scan()
+                supports_callback = len(inspect.signature(scan_fn).parameters) >= 1
+            except (TypeError, ValueError):
+                supports_callback = False
 
-            if not used_callback and not self._apply_scan_result_from_object(result):
+            if supports_callback:
+                scan_fn(self._on_barcode_scanned)
+                return
+
+            result = scan_fn()
+            if not self._apply_scan_result_from_object(result):
                 self.barcode_status = "No barcode detected."
-            elif used_callback and isinstance(result, str) and result.strip():
-                self._apply_scan_result(result.strip(), "Scanned barcode captured.")
+        except TypeError:
+            result = plyer_barcode.scan()
+            if not self._apply_scan_result_from_object(result):
+                self.barcode_status = "No barcode detected."
         except PermissionError:
             self.barcode_status = "Camera permission denied. Enable camera permission and retry."
         except NotImplementedError:
