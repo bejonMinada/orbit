@@ -7,9 +7,10 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 author = Orbit Team
 version = 0.1.0
-requirements = python3,kivy
+requirements = python3,kivy,plyer
 orientation = portrait
 fullscreen = 0
+android.permissions = CAMERA
 
 [buildozer]
 log_level = 2

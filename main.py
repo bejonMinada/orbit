@@ -3,9 +3,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.lang import Builder
 from kivy.properties import StringProperty
 from kivy.uix.boxlayout import BoxLayout
+
+try:
+    from plyer import barcode as plyer_barcode
+except Exception:  # pragma: no cover - optional runtime support
+    plyer_barcode = None
 
 KV = """
 <OrbitRoot>:
@@ -47,6 +53,13 @@ KV = """
             size_hint_y: None
             height: dp(42)
 
+        Spinner:
+            id: category_spinner
+            text: "General"
+            values: ["General", "Groceries", "Transport", "Bills", "Health", "Entertainment", "Other"]
+            size_hint_y: None
+            height: dp(42)
+
         TextInput:
             id: note_input
             hint_text: "Note (e.g. salary, groceries)"
@@ -75,6 +88,23 @@ KV = """
             height: dp(64)
 
         Label:
+            text: root.monthly_analytics_title
+            size_hint_y: None
+            height: dp(28)
+            bold: True
+
+        ScrollView:
+            size_hint_y: None
+            height: dp(130)
+            Label:
+                text: root.monthly_analytics_text
+                halign: "left"
+                valign: "top"
+                text_size: self.width, None
+                size_hint_y: None
+                height: max(self.texture_size[1], dp(120))
+
+        Label:
             text: "Recent Transactions"
             size_hint_y: None
             height: dp(28)
@@ -88,7 +118,7 @@ KV = """
                 valign: "top"
                 text_size: self.width, None
                 size_hint_y: None
-                height: max(self.texture_size[1], dp(200))
+                height: max(self.texture_size[1], dp(180))
 
     BoxLayout:
         id: barcode_section
@@ -116,6 +146,12 @@ KV = """
             multiline: False
             size_hint_y: None
             height: dp(42)
+
+        Button:
+            text: "Scan Barcode with Camera"
+            size_hint_y: None
+            height: dp(42)
+            on_release: root.scan_barcode()
 
         Button:
             text: "Register Barcode"
@@ -164,6 +200,7 @@ class OrbitStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     tx_type TEXT NOT NULL,
                     amount REAL NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'General',
                     note TEXT,
                     created_at TEXT NOT NULL
                 )
@@ -180,17 +217,23 @@ class OrbitStore:
                 """
             )
 
-    def add_transaction(self, tx_type: str, amount: float, note: str):
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()]
+            if "category" not in columns:
+                conn.execute(
+                    "ALTER TABLE transactions ADD COLUMN category TEXT NOT NULL DEFAULT 'General'"
+                )
+
+    def add_transaction(self, tx_type: str, amount: float, category: str, note: str):
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO transactions (tx_type, amount, note, created_at) VALUES (?, ?, ?, ?)",
-                (tx_type, amount, note, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO transactions (tx_type, amount, category, note, created_at) VALUES (?, ?, ?, ?, ?)",
+                (tx_type, amount, category, note, datetime.now(timezone.utc).isoformat()),
             )
 
     def fetch_transactions(self, limit: int = 20):
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT tx_type, amount, note, created_at FROM transactions ORDER BY id DESC LIMIT ?",
+                "SELECT tx_type, amount, category, note, created_at FROM transactions ORDER BY id DESC LIMIT ?",
                 (limit,),
             )
             return cursor.fetchall()
@@ -204,6 +247,28 @@ class OrbitStore:
                 "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Expense'"
             ).fetchone()[0]
         return float(income), float(expense), float(income - expense)
+
+    def get_monthly_analytics(self, month_key: str):
+        with self._connect() as conn:
+            income = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Income' AND substr(created_at, 1, 7) = ?",
+                (month_key,),
+            ).fetchone()[0]
+            expense = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE tx_type = 'Expense' AND substr(created_at, 1, 7) = ?",
+                (month_key,),
+            ).fetchone()[0]
+            rows = conn.execute(
+                """
+                SELECT tx_type, category, COALESCE(SUM(amount), 0) AS total
+                FROM transactions
+                WHERE substr(created_at, 1, 7) = ?
+                GROUP BY tx_type, category
+                ORDER BY tx_type, total DESC
+                """,
+                (month_key,),
+            ).fetchall()
+        return float(income), float(expense), float(income - expense), rows
 
     def add_barcode(self, code: str, product_name: str) -> bool:
         with self._connect() as conn:
@@ -228,6 +293,8 @@ class OrbitStore:
 class OrbitRoot(BoxLayout):
     budget_summary = StringProperty("")
     transactions_text = StringProperty("No transactions yet.")
+    monthly_analytics_title = StringProperty("Current Month Analytics")
+    monthly_analytics_text = StringProperty("No transactions yet this month.")
     barcodes_text = StringProperty("No barcodes yet.")
     barcode_status = StringProperty("")
     transaction_status = StringProperty("")
@@ -253,6 +320,7 @@ class OrbitRoot(BoxLayout):
     def add_transaction(self):
         amount_text = self.ids.amount_input.text.strip()
         note = self.ids.note_input.text.strip()
+        category = self.ids.category_spinner.text
         tx_type = self.ids.tx_type_spinner.text
 
         if not amount_text:
@@ -269,11 +337,54 @@ class OrbitRoot(BoxLayout):
             self.transaction_status = "Amount must be greater than 0."
             return
 
-        self.store.add_transaction(tx_type=tx_type, amount=amount, note=note)
+        self.store.add_transaction(tx_type=tx_type, amount=amount, category=category, note=note)
         self.ids.amount_input.text = ""
         self.ids.note_input.text = ""
         self.transaction_status = "Transaction saved."
         self.refresh_budget()
+
+    def scan_barcode(self):
+        if plyer_barcode is None:
+            self.barcode_status = "Camera barcode scanner unavailable. Use manual barcode input."
+            return
+
+        self.barcode_status = "Opening camera scanner..."
+        try:
+            result = plyer_barcode.scan(self._on_barcode_scanned)
+            if isinstance(result, str) and result.strip():
+                self._apply_scan_result(result.strip(), "Scanned barcode captured.")
+        except TypeError:
+            try:
+                result = plyer_barcode.scan()
+                if isinstance(result, str) and result.strip():
+                    self._apply_scan_result(result.strip(), "Scanned barcode captured.")
+                else:
+                    self.barcode_status = "No barcode detected."
+            except Exception:
+                self.barcode_status = "Scanner failed. Use manual barcode input."
+        except Exception:
+            self.barcode_status = "Scanner failed. Use manual barcode input."
+
+    def _on_barcode_scanned(self, scanned_data):
+        code = ""
+        if isinstance(scanned_data, str):
+            code = scanned_data.strip()
+        elif isinstance(scanned_data, dict):
+            code = str(scanned_data.get("data") or scanned_data.get("text") or "").strip()
+        elif isinstance(scanned_data, (list, tuple)) and scanned_data:
+            code = str(scanned_data[0]).strip()
+        elif scanned_data:
+            code = str(scanned_data).strip()
+
+        if code:
+            Clock.schedule_once(lambda _dt: self._apply_scan_result(code, "Scanned barcode captured."))
+        else:
+            Clock.schedule_once(lambda _dt: self._apply_scan_result("", "No barcode detected."))
+
+    def _apply_scan_result(self, code: str, message: str):
+        if code:
+            self.ids.barcode_input.text = code
+        self.barcode_status = message
 
     def register_barcode(self):
         code = self.ids.barcode_input.text.strip()
@@ -299,17 +410,42 @@ class OrbitRoot(BoxLayout):
         transactions = self.store.fetch_transactions(limit=20)
         if not transactions:
             self.transactions_text = "No transactions yet."
+            self.refresh_monthly_analytics()
             return
 
         lines = []
-        for tx_type, amount, note, created_at in transactions:
+        for tx_type, amount, category, note, created_at in transactions:
             try:
                 ts = datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
             except ValueError:
                 ts = created_at
             note_part = f" - {note}" if note else ""
-            lines.append(f"[{ts}] {tx_type}: {self.CURRENCY}{amount:,.2f}{note_part}")
+            lines.append(
+                f"[{ts}] {tx_type} ({category}): {self.CURRENCY}{amount:,.2f}{note_part}"
+            )
         self.transactions_text = "\n".join(lines)
+        self.refresh_monthly_analytics()
+
+    def refresh_monthly_analytics(self):
+        month_key = datetime.now(timezone.utc).strftime("%Y-%m")
+        income, expense, balance, rows = self.store.get_monthly_analytics(month_key)
+        self.monthly_analytics_title = f"Current Month Analytics ({month_key})"
+
+        if not rows:
+            self.monthly_analytics_text = "No transactions yet this month."
+            return
+
+        lines = [
+            f"Income: {self.CURRENCY}{income:,.2f}",
+            f"Expense: {self.CURRENCY}{expense:,.2f}",
+            f"Balance: {self.CURRENCY}{balance:,.2f}",
+            "",
+            "Breakdown by category:",
+        ]
+        for tx_type, category, total in rows:
+            lines.append(f"- {tx_type} | {category}: {self.CURRENCY}{float(total):,.2f}")
+
+        self.monthly_analytics_text = "\n".join(lines)
 
     def _format_budget_summary(self, income: float, expense: float, balance: float) -> str:
         return (

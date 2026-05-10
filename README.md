@@ -1,11 +1,14 @@
 # Orbit
 
-Orbit is a Python-based Android-ready MVP app built with **Kivy**.
+Orbit is a Python-based Android-ready app built with **Kivy**.
 
-## MVP features
+## MVP+ features
 - Budget tracking (income and expense entries)
 - Running totals (income, expense, balance)
+- Budget category tagging per transaction
+- Current-month analytics with category breakdown
 - Product barcode registry in a separate dropdown section
+- Camera barcode scanning support (device/OS dependent, with manual fallback)
 - Local persistence using SQLite
 
 ## Run locally
@@ -28,9 +31,5 @@ Use Buildozer on Linux:
    ```
 3. The generated `.apk` is created in the `bin/` directory.
 
-## Notes for next phase
-Potential next features after MVP:
-- Barcode scanning through camera integration (instead of manual barcode entry)
-- Price comparison from marketplaces (Shopee, Lazada, etc.)
-- Budget categories and monthly insights
-- Cloud sync and backup
+## Notes
+- Marketplace price comparison (Shopee/Lazada/etc.) is not included yet because a reliable forever-free integration cannot be guaranteed for production usage.
