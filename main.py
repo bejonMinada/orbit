@@ -101,7 +101,6 @@ KV = """
             id: barcode_input
             hint_text: "Barcode number"
             multiline: False
-            input_filter: "int"
             size_hint_y: None
             height: dp(42)
 
@@ -293,7 +292,10 @@ class OrbitRoot(BoxLayout):
 
         lines = []
         for tx_type, amount, note, created_at in transactions:
-            ts = created_at.replace("T", " ")[:16]
+            try:
+                ts = datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M")
+            except ValueError:
+                ts = created_at
             note_part = f" - {note}" if note else ""
             lines.append(f"[{ts}] {tx_type}: ₱{amount:,.2f}{note_part}")
         self.transactions_text = "\n".join(lines)
