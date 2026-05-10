@@ -226,7 +226,7 @@ class OrbitStore:
 
 
 class OrbitRoot(BoxLayout):
-    budget_summary = StringProperty("Income: ₱0.00 | Expense: ₱0.00 | Balance: ₱0.00")
+    budget_summary = StringProperty("")
     transactions_text = StringProperty("No transactions yet.")
     barcodes_text = StringProperty("No barcodes yet.")
     barcode_status = StringProperty("")
@@ -236,6 +236,7 @@ class OrbitRoot(BoxLayout):
     def __init__(self, store: OrbitStore, **kwargs):
         super().__init__(**kwargs)
         self.store = store
+        self.budget_summary = self._format_budget_summary(0.0, 0.0, 0.0)
         self.refresh_budget()
         self.refresh_barcodes()
 
@@ -255,7 +256,7 @@ class OrbitRoot(BoxLayout):
         tx_type = self.ids.tx_type_spinner.text
 
         if not amount_text:
-            self.transaction_status = "Please enter an amount."
+            self.transaction_status = "Please enter a valid amount (e.g., 245.75)."
             return
 
         try:
@@ -279,7 +280,7 @@ class OrbitRoot(BoxLayout):
         product_name = self.ids.product_name_input.text.strip()
 
         if not code or not product_name:
-            self.barcode_status = "Please fill barcode and product."
+            self.barcode_status = "Please enter both barcode and product name."
             return
 
         added = self.store.add_barcode(code, product_name)
@@ -293,9 +294,7 @@ class OrbitRoot(BoxLayout):
 
     def refresh_budget(self):
         income, expense, balance = self.store.get_totals()
-        self.budget_summary = (
-            f"Income: {self.CURRENCY}{income:,.2f} | Expense: {self.CURRENCY}{expense:,.2f} | Balance: {self.CURRENCY}{balance:,.2f}"
-        )
+        self.budget_summary = self._format_budget_summary(income, expense, balance)
 
         transactions = self.store.fetch_transactions(limit=20)
         if not transactions:
@@ -311,6 +310,11 @@ class OrbitRoot(BoxLayout):
             note_part = f" - {note}" if note else ""
             lines.append(f"[{ts}] {tx_type}: {self.CURRENCY}{amount:,.2f}{note_part}")
         self.transactions_text = "\n".join(lines)
+
+    def _format_budget_summary(self, income: float, expense: float, balance: float) -> str:
+        return (
+            f"Income: {self.CURRENCY}{income:,.2f} | Expense: {self.CURRENCY}{expense:,.2f} | Balance: {self.CURRENCY}{balance:,.2f}"
+        )
 
     def refresh_barcodes(self):
         rows = self.store.fetch_barcodes(limit=30)
